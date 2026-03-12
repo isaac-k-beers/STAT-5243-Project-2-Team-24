@@ -61,5 +61,12 @@ mod_upload_server <- function(id) {
     output$error_text <- shiny::renderText({
       error_message()
     })
+    
+    return(
+      list(
+        data = shiny::reactive(current_data())
+      )
+    )
+    
   })
 }

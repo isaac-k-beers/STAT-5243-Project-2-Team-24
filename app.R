@@ -14,7 +14,9 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-  mod_upload_server("upload")
+  
+  upload <- mod_upload_server("upload")
+  
 }
 
 shinyApp(ui, server)
