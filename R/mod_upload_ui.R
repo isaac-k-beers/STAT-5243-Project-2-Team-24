@@ -42,6 +42,7 @@ mod_upload_ui <- function(id) {
       
       shiny::mainPanel(
         shiny::h3("Data Preview"),
+        shiny::p("Showing up to the first 1000 rows."),
         DT::DTOutput(ns("preview_table"))
       )
     )

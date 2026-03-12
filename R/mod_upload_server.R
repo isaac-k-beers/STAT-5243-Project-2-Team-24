@@ -29,11 +29,17 @@ mod_upload_server <- function(id) {
       df <- current_data()
       req(df)
       
+      preview_df <- head(df, 1000)
+      
       DT::datatable(
-        df,
-        options = list(pageLength = 10, scrollX = TRUE)
+        preview_df,
+        options = list(
+          pageLength = 10,
+          scrollX = TRUE
+        ),
+        rownames = FALSE
       )
-    })
+    }, server = TRUE)
     
     output$metadata_table <- shiny::renderTable({
       df <- current_data()
