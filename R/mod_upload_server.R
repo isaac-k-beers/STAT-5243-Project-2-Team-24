@@ -51,6 +51,13 @@ mod_upload_server <- function(id) {
       )
     })
     
+    output$summary_output <- shiny::renderPrint({
+      df <- current_data()
+      req(df)
+      
+      summary(df)
+    })
+    
     output$error_text <- shiny::renderText({
       error_message()
     })

@@ -33,6 +33,9 @@ mod_upload_ui <- function(id) {
         shiny::h4("Dataset Metadata"),
         shiny::tableOutput(ns("metadata_table")),
         
+        shiny::h4("Dataset Summary"),
+        shiny::verbatimTextOutput(ns("summary_output")),
+        
         shiny::br(),
         shiny::textOutput(ns("error_text"))
       ),
