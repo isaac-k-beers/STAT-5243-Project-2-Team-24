@@ -1,1 +1,451 @@
+# Feature Engineering Module — Citi Bike Trip Data
 
+library(shiny)
+library(dplyr)
+library(lubridate)
+library(geosphere)   # for distHaversine()
+library(ggplot2)
+library(DT)
+library(shinydashboard)
+
+# 1. Helper: compute all engineered features on a data frame
+engineer_features <- function(df, selected_features) {
+
+  df <- df %>%
+    mutate(
+      started_at = ymd_hms(started_at),
+      ended_at   = ymd_hms(ended_at)
+    )
+
+  if ("trip_duration_min" %in% selected_features) {
+    df <- df %>%
+      mutate(trip_duration_min = as.numeric(difftime(ended_at, started_at, units = "mins")))
+  }
+
+  if ("hour_of_day" %in% selected_features) {
+    df <- df %>% mutate(hour_of_day = hour(started_at))
+  }
+
+  if ("day_of_week" %in% selected_features) {
+    df <- df %>%
+      mutate(day_of_week = wday(started_at, label = TRUE, abbr = FALSE))
+  }
+
+  if ("is_weekend" %in% selected_features) {
+    df <- df %>%
+      mutate(is_weekend = if_else(wday(started_at) %in% c(1, 7), "Weekend", "Weekday"))
+  }
+
+  if ("time_of_day_segment" %in% selected_features) {
+    df <- df %>%
+      mutate(time_of_day_segment = case_when(
+        hour(started_at) >= 6  & hour(started_at) < 10  ~ "Morning Rush",
+        hour(started_at) >= 10 & hour(started_at) < 16  ~ "Midday",
+        hour(started_at) >= 16 & hour(started_at) < 20  ~ "Evening Rush",
+        hour(started_at) >= 20 | hour(started_at) < 6   ~ "Night/Off-peak"
+      ))
+  }
+
+  if ("week_of_month" %in% selected_features) {
+    df <- df %>%
+      mutate(week_of_month = ceiling(day(started_at) / 7))
+  }
+
+  if ("haversine_distance_km" %in% selected_features) {
+    df <- df %>%
+      rowwise() %>%
+      mutate(
+        haversine_distance_km = if_else(
+          !is.na(start_lat) & !is.na(end_lat),
+          distHaversine(
+            c(start_lng, start_lat),
+            c(end_lng,   end_lat)
+          ) / 1000,
+          NA_real_
+        )
+      ) %>%
+      ungroup()
+  }
+
+  if ("avg_speed_kmh" %in% selected_features) {
+    # Requires both distance and duration to have been computed
+    if (!"haversine_distance_km" %in% names(df)) {
+      df <- df %>%
+        rowwise() %>%
+        mutate(
+          haversine_distance_km = if_else(
+            !is.na(start_lat) & !is.na(end_lat),
+            distHaversine(c(start_lng, start_lat), c(end_lng, end_lat)) / 1000,
+            NA_real_
+          )
+        ) %>%
+        ungroup()
+    }
+    if (!"trip_duration_min" %in% names(df)) {
+      df <- df %>%
+        mutate(trip_duration_min = as.numeric(difftime(ended_at, started_at, units = "mins")))
+    }
+    df <- df %>%
+      mutate(avg_speed_kmh = if_else(
+        trip_duration_min > 0,
+        haversine_distance_km / (trip_duration_min / 60),
+        NA_real_
+      ))
+  }
+
+  if ("same_station_trip" %in% selected_features) {
+    df <- df %>%
+      mutate(same_station_trip = if_else(
+        !is.na(start_station_id) & !is.na(end_station_id) &
+          start_station_id == end_station_id,
+        "Round Trip", "One-way"
+      ))
+  }
+
+  # --- Rider / bike-type features ------------------------------------------
+  if ("is_electric" %in% selected_features) {
+    df <- df %>%
+      mutate(is_electric = if_else(rideable_type == "electric_bike", "Electric", "Non-electric"))
+  }
+
+  if ("member_binary" %in% selected_features) {
+    df <- df %>%
+      mutate(member_binary = if_else(member_casual == "member", 1L, 0L))
+  }
+
+  df
+}
+
+# 2. Feature catalogue 
+feature_catalogue <- list(
+  `Time-Based` = c(
+    "Trip Duration (minutes)"     = "trip_duration_min",
+    "Hour of Day"                 = "hour_of_day",
+    "Day of Week"                 = "day_of_week",
+    "Weekday / Weekend"           = "is_weekend",
+    "Time-of-Day Segment"         = "time_of_day_segment",
+    "Week of Month"               = "week_of_month"
+  ),
+  `Geospatial` = c(
+    "Haversine Distance (km)"     = "haversine_distance_km",
+    "Average Speed (km/h)"        = "avg_speed_kmh",
+    "Round-Trip Flag"             = "same_station_trip"
+  ),
+  `Rider & Bike` = c(
+    "Electric Bike Flag"          = "is_electric",
+    "Member (binary 0/1)"         = "member_binary"
+  )
+)
+
+feature_descriptions <- c(
+  trip_duration_min    = "Minutes between ride start and end times.",
+  hour_of_day          = "Hour (0–23) when the ride started.",
+  day_of_week          = "Full weekday name (Monday … Sunday).",
+  is_weekend           = "Weekday vs Weekend based on the start date.",
+  time_of_day_segment  = "Morning Rush / Midday / Evening Rush / Night.",
+  week_of_month        = "Which week of the month (1–5) the ride falls in.",
+  haversine_distance_km= "Straight-line distance between start and end coords.",
+  avg_speed_kmh        = "Distance ÷ duration; proxy for riding speed.",
+  same_station_trip    = "Whether the ride starts and ends at the same station.",
+  is_electric          = "Electric vs non-electric bike label.",
+  member_binary        = "1 = annual member, 0 = casual rider."
+)
+
+# Numeric features eligible for distribution plot
+numeric_features <- c("trip_duration_min", "haversine_distance_km",
+                       "avg_speed_kmh", "hour_of_day",
+                       "week_of_month", "member_binary")
+
+# =============================================================================
+# UI
+# =============================================================================
+ui <- fluidPage(
+  titlePanel("🚲 Citi Bike — Feature Engineering"),
+  tags$head(tags$style(HTML("
+    .well { background: #f8f9fa; border: 1px solid #dee2e6; }
+    .feature-desc { font-size: 0.85em; color: #6c757d; margin-top: 4px; }
+    h4 { margin-top: 18px; }
+  "))),
+
+  sidebarLayout(
+    sidebarPanel(
+      width = 3,
+
+      h4("📂 Data Source"),
+      fileInput("upload_csv", "Upload CSV (optional)",
+                accept = ".csv",
+                placeholder = "Default: built-in Jan 2023 data"),
+      hr(),
+
+      h4("🛠 Select Features to Engineer"),
+      checkboxGroupInput(
+        "selected_feats",
+        label = NULL,
+        choices  = feature_catalogue,
+        selected = c("trip_duration_min", "is_weekend",
+                     "time_of_day_segment", "haversine_distance_km")
+      ),
+      hr(),
+
+      h4("🔢 Sample Size"),
+      sliderInput("sample_n", "Rows to process",
+                  min = 500, max = 56075, value = 10000, step = 500),
+      actionButton("run_btn", "▶  Apply Features", class = "btn-primary btn-block"),
+      br(),
+      downloadButton("download_btn", "⬇ Download Engineered CSV")
+    ),
+
+    mainPanel(
+      width = 9,
+      tabsetPanel(
+        id = "main_tabs",
+
+        # --- Tab 1: Feature Descriptions ---
+        tabPanel(
+          "📖 Feature Guide",
+          br(),
+          uiOutput("feature_guide_ui")
+        ),
+
+        # --- Tab 2: Preview Table ---
+        tabPanel(
+          "🔍 Data Preview",
+          br(),
+          DTOutput("preview_table")
+        ),
+
+        # --- Tab 3: Distribution Plot ---
+        tabPanel(
+          "📊 Feature Distributions",
+          br(),
+          fluidRow(
+            column(4,
+              selectInput("plot_feature", "Choose a numeric feature to plot:",
+                          choices = NULL)
+            ),
+            column(4,
+              selectInput("plot_group", "Colour / facet by:",
+                          choices = c("None", "is_weekend", "time_of_day_segment",
+                                      "is_electric", "same_station_trip", "member_casual"))
+            ),
+            column(4,
+              selectInput("plot_type", "Plot type:",
+                          choices = c("Histogram", "Density", "Boxplot"))
+            )
+          ),
+          plotOutput("dist_plot", height = "420px"),
+          br(),
+          verbatimTextOutput("dist_summary")
+        ),
+
+        # --- Tab 4: Correlation / Scatter ---
+        tabPanel(
+          "🔗 Scatter / Correlation",
+          br(),
+          fluidRow(
+            column(4, selectInput("scatter_x", "X axis:", choices = NULL)),
+            column(4, selectInput("scatter_y", "Y axis:", choices = NULL)),
+            column(4, selectInput("scatter_color", "Colour by:",
+                                  choices = c("None", "is_weekend",
+                                              "time_of_day_segment",
+                                              "is_electric", "member_casual")))
+          ),
+          plotOutput("scatter_plot", height = "420px")
+        ),
+
+        # --- Tab 5: Feature Statistics ---
+        tabPanel(
+          "📋 Summary Statistics",
+          br(),
+          verbatimTextOutput("summary_stats")
+        )
+      )
+    )
+  )
+)
+
+# =============================================================================
+# SERVER
+server <- function(input, output, session) {
+
+  # ------------------------------------------------------------------
+  # Reactive: raw data (uploaded or built-in)
+  # ------------------------------------------------------------------
+  raw_data <- reactive({
+    if (!is.null(input$upload_csv)) {
+      read.csv(input$upload_csv$datapath, stringsAsFactors = FALSE)
+    } else {
+      read.csv("JC-202301-citibike-tripdata.csv", stringsAsFactors = FALSE)
+    }
+  })
+
+  eng_data <- eventReactive(input$run_btn, {
+    req(raw_data())
+    df <- raw_data() %>% slice_sample(n = min(input$sample_n, nrow(raw_data())))
+    withProgress(message = "Engineering features…", value = 0.5, {
+      engineer_features(df, input$selected_feats)
+    })
+  }, ignoreNULL = FALSE)   # run on startup with defaults
+
+  observe({
+    isolate({ eng_data() })
+  })
+
+  observe({
+    df <- eng_data()
+    num_cols <- names(df)[sapply(df, is.numeric)]
+    cat_cols <- names(df)[sapply(df, function(x) is.character(x) | is.factor(x))]
+
+    updateSelectInput(session, "plot_feature",
+                      choices  = intersect(num_cols, c(numeric_features, num_cols)),
+                      selected = if ("trip_duration_min" %in% num_cols) "trip_duration_min" else num_cols[1])
+    updateSelectInput(session, "scatter_x",
+                      choices  = num_cols,
+                      selected = if ("trip_duration_min" %in% num_cols) "trip_duration_min" else num_cols[1])
+    updateSelectInput(session, "scatter_y",
+                      choices  = num_cols,
+                      selected = if ("haversine_distance_km" %in% num_cols) "haversine_distance_km" else num_cols[min(2, length(num_cols))])
+  })
+
+  # ------------------------------------------------------------------
+  # Tab 1: Feature Guide
+  # ------------------------------------------------------------------
+  output$feature_guide_ui <- renderUI({
+    sel <- input$selected_feats
+    if (length(sel) == 0) return(p("No features selected yet."))
+
+    tagList(
+      h4("Currently selected features and their definitions:"),
+      tags$table(
+        class = "table table-striped table-sm",
+        tags$thead(tags$tr(
+          tags$th("Feature Column"),
+          tags$th("Description")
+        )),
+        tags$tbody(
+          lapply(sel, function(f) {
+            tags$tr(
+              tags$td(tags$code(f)),
+              tags$td(feature_descriptions[f])
+            )
+          })
+        )
+      )
+    )
+  })
+
+  # ------------------------------------------------------------------
+  # Tab 2: Data Preview
+  
+  output$preview_table <- renderDT({
+    req(eng_data())
+    datatable(
+      head(eng_data(), 200),
+      options  = list(scrollX = TRUE, pageLength = 15, dom = "tp"),
+      rownames = FALSE
+    )
+  })
+
+  # Tab 3: Distribution Plot
+  output$dist_plot <- renderPlot({
+    df  <- eng_data()
+    feat <- input$plot_feature
+    grp  <- input$plot_group
+    ptype <- input$plot_type
+    req(feat %in% names(df))
+
+    # Remove extreme outliers for cleaner plots (99th percentile cap)
+    cap <- quantile(df[[feat]], 0.99, na.rm = TRUE)
+    df2 <- df %>% filter(.data[[feat]] <= cap, !is.na(.data[[feat]]))
+
+    if (grp == "None" || !grp %in% names(df2)) {
+      p <- ggplot(df2, aes(x = .data[[feat]]))
+    } else {
+      p <- ggplot(df2, aes(x = .data[[feat]], fill = .data[[grp]],
+                           colour = .data[[grp]]))
+    }
+
+    p <- switch(ptype,
+      "Histogram" = p + geom_histogram(bins = 40, alpha = 0.7, position = "identity"),
+      "Density"   = p + geom_density(alpha = 0.5),
+      "Boxplot"   = {
+        if (grp != "None" && grp %in% names(df2)) {
+          ggplot(df2, aes(x = .data[[grp]], y = .data[[feat]],
+                          fill = .data[[grp]])) +
+            geom_boxplot(alpha = 0.7, outlier.size = 0.5) +
+            theme(axis.text.x = element_text(angle = 30, hjust = 1))
+        } else {
+          ggplot(df2, aes(y = .data[[feat]])) +
+            geom_boxplot(alpha = 0.7, fill = "steelblue")
+        }
+      }
+    )
+
+    p + theme_minimal(base_size = 14) +
+        labs(title = paste("Distribution of", feat),
+             x = feat, y = "Count") +
+        theme(legend.position = "bottom")
+  })
+
+  output$dist_summary <- renderPrint({
+    df   <- eng_data()
+    feat <- input$plot_feature
+    req(feat %in% names(df))
+    summary(df[[feat]])
+  })
+
+  
+  # Tab 4: Scatter
+  output$scatter_plot <- renderPlot({
+    df  <- eng_data()
+    x   <- input$scatter_x
+    y   <- input$scatter_y
+    col <- input$scatter_color
+    req(x %in% names(df), y %in% names(df))
+
+    # Cap outliers for better scatter
+    cap_x <- quantile(df[[x]], 0.99, na.rm = TRUE)
+    cap_y <- quantile(df[[y]], 0.99, na.rm = TRUE)
+    df2 <- df %>%
+      filter(.data[[x]] <= cap_x, .data[[y]] <= cap_y,
+             !is.na(.data[[x]]), !is.na(.data[[y]])) %>%
+      slice_sample(n = min(3000, nrow(.)))  # keep plot responsive
+
+    if (col != "None" && col %in% names(df2)) {
+      p <- ggplot(df2, aes(.data[[x]], .data[[y]], colour = .data[[col]]))
+    } else {
+      p <- ggplot(df2, aes(.data[[x]], .data[[y]]))
+    }
+
+    p + geom_point(alpha = 0.35, size = 1.2) +
+        geom_smooth(method = "lm", se = FALSE, linewidth = 0.8, colour = "black") +
+        theme_minimal(base_size = 14) +
+        labs(title = paste(y, "vs", x),
+             x = x, y = y) +
+        theme(legend.position = "bottom")
+  })
+
+  
+  # Tab 5: Summary Statistics
+  output$summary_stats <- renderPrint({
+    df <- eng_data()
+    num_cols <- names(df)[sapply(df, is.numeric)]
+    if (length(num_cols) == 0) {
+      cat("No numeric engineered features in current selection.\n")
+    } else {
+      df %>% select(all_of(num_cols)) %>% summary() %>% print()
+    }
+  })
+
+  # ------------------------------------------------------------------
+  # Download handler
+  output$download_btn <- downloadHandler(
+    filename = function() paste0("citibike_engineered_", Sys.Date(), ".csv"),
+    content  = function(file) {
+      write.csv(eng_data(), file, row.names = FALSE)
+    }
+  )
+}
+
+# Run the app
+shinyApp(ui = ui, server = server)
