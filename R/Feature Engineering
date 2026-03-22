@@ -102,7 +102,7 @@ engineer_features <- function(df, selected_features) {
       ))
   }
 
-  # --- Rider / bike-type features ------------------------------------------
+  # --- Rider / bike-type features ---
   if ("is_electric" %in% selected_features) {
     df <- df %>%
       mutate(is_electric = if_else(rideable_type == "electric_bike", "Electric", "Non-electric"))
@@ -156,9 +156,8 @@ numeric_features <- c("trip_duration_min", "haversine_distance_km",
                        "avg_speed_kmh", "hour_of_day",
                        "week_of_month", "member_binary")
 
-# =============================================================================
 # UI
-# =============================================================================
+
 ui <- fluidPage(
   titlePanel("🚲 Citi Bike — Feature Engineering"),
   tags$head(tags$style(HTML("
@@ -307,9 +306,7 @@ server <- function(input, output, session) {
                       selected = if ("haversine_distance_km" %in% num_cols) "haversine_distance_km" else num_cols[min(2, length(num_cols))])
   })
 
-  # ------------------------------------------------------------------
   # Tab 1: Feature Guide
-  # ------------------------------------------------------------------
   output$feature_guide_ui <- renderUI({
     sel <- input$selected_feats
     if (length(sel) == 0) return(p("No features selected yet."))
@@ -334,7 +331,7 @@ server <- function(input, output, session) {
     )
   })
 
-  # ------------------------------------------------------------------
+  
   # Tab 2: Data Preview
   
   output$preview_table <- renderDT({
@@ -437,7 +434,6 @@ server <- function(input, output, session) {
     }
   })
 
-  # ------------------------------------------------------------------
   # Download handler
   output$download_btn <- downloadHandler(
     filename = function() paste0("citibike_engineered_", Sys.Date(), ".csv"),
