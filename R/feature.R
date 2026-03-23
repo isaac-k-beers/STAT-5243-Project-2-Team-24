@@ -1,12 +1,4 @@
-# =============================================================================
-# app.R — Citi Bike Feature Engineering Shiny App
-# Project 2: Web Application Development and Deployment
-# =============================================================================
-# Required packages:
-#   shiny, dplyr, lubridate, geosphere, ggplot2, DT, shinydashboard
-# =============================================================================
 
-# ---- 0. Auto-install missing packages ---------------------------------------
 required_pkgs <- c("shiny", "dplyr", "lubridate", "geosphere",
                    "ggplot2", "DT", "shinydashboard")
 
@@ -21,9 +13,7 @@ library(ggplot2)
 library(DT)
 library(shinydashboard)
 
-# =============================================================================
-# 1. Feature engineering function
-# =============================================================================
+
 engineer_features <- function(df, selected_features) {
 
   df <- df %>%
@@ -32,7 +22,6 @@ engineer_features <- function(df, selected_features) {
       ended_at   = ymd_hms(ended_at)
     )
 
-  # --- Time-based -----------------------------------------------------------
   if ("trip_duration_min" %in% selected_features)
     df <- df %>%
       mutate(trip_duration_min = as.numeric(difftime(ended_at, started_at, units = "mins")))
@@ -59,7 +48,6 @@ engineer_features <- function(df, selected_features) {
   if ("week_of_month" %in% selected_features)
     df <- df %>% mutate(week_of_month = ceiling(day(started_at) / 7))
 
-  # --- Geospatial -----------------------------------------------------------
   if ("haversine_distance_km" %in% selected_features)
     df <- df %>%
       rowwise() %>%
@@ -100,7 +88,6 @@ engineer_features <- function(df, selected_features) {
         "Round Trip", "One-way"
       ))
 
-  # --- Rider & bike type ----------------------------------------------------
   if ("is_electric" %in% selected_features)
     df <- df %>%
       mutate(is_electric = if_else(rideable_type == "electric_bike", "Electric", "Non-electric"))
@@ -112,9 +99,6 @@ engineer_features <- function(df, selected_features) {
   df
 }
 
-# =============================================================================
-# 2. Feature catalogue & metadata
-# =============================================================================
 feature_catalogue <- list(
   `⏱ Time-Based` = c(
     "Trip Duration (minutes)"  = "trip_duration_min",
@@ -151,10 +135,6 @@ feature_descriptions <- c(
 
 numeric_features <- c("trip_duration_min", "haversine_distance_km",
                        "avg_speed_kmh", "hour_of_day", "week_of_month", "member_binary")
-
-# =============================================================================
-# 3. UI
-# =============================================================================
 ui <- fluidPage(
   title = "Citi Bike Feature Engineering",
 
@@ -171,7 +151,6 @@ ui <- fluidPage(
     hr { border-color: #e9ecef; }
   "))),
 
-  # Top banner
   tags$div(
     style = "background:#1a1a2e; color:white; padding:14px 24px; margin-bottom:20px;
              border-radius:0 0 8px 8px; display:flex; align-items:center; gap:12px;",
@@ -183,9 +162,6 @@ ui <- fluidPage(
   ),
 
   sidebarLayout(
-    # ------------------------------------------------------------------
-    # Sidebar
-    # ------------------------------------------------------------------
     sidebarPanel(
       width = 3,
       div(class = "sidebar-panel",
@@ -220,9 +196,6 @@ ui <- fluidPage(
       )
     ),
 
-    # ------------------------------------------------------------------
-    # Main panel
-    # ------------------------------------------------------------------
     mainPanel(
       width = 9,
       div(class = "main-panel",
@@ -239,7 +212,6 @@ ui <- fluidPage(
             DTOutput("preview_table")
           ),
 
-          # Tab 3 — Distributions
           tabPanel("📊 Distributions", br(),
             fluidRow(
               column(4, selectInput("plot_feature", "Numeric feature:", choices = NULL)),
@@ -256,7 +228,6 @@ ui <- fluidPage(
             verbatimTextOutput("dist_summary")
           ),
 
-          # Tab 4 — Scatter
           tabPanel("🔗 Scatter", br(),
             fluidRow(
               column(4, selectInput("scatter_x", "X axis:", choices = NULL)),
@@ -269,7 +240,6 @@ ui <- fluidPage(
             plotOutput("scatter_plot", height = "420px")
           ),
 
-          # Tab 5 — Summary
           tabPanel("📋 Summary Stats", br(),
             verbatimTextOutput("summary_stats")
           )
@@ -279,9 +249,6 @@ ui <- fluidPage(
   )
 )
 
-# =============================================================================
-# 4. Server
-# =============================================================================
 server <- function(input, output, session) {
 
   # ---- Raw data (upload or built-in) ---------------------------------------
@@ -293,7 +260,6 @@ server <- function(input, output, session) {
     }
   })
 
-  # ---- Engineered data (on button click) -----------------------------------
   eng_data <- eventReactive(input$run_btn, {
     req(raw_data())
     df <- raw_data() %>% slice_sample(n = min(input$sample_n, nrow(raw_data())))
@@ -302,7 +268,6 @@ server <- function(input, output, session) {
     )
   }, ignoreNULL = FALSE)
 
-  # ---- Update plot selectors -----------------------------------------------
   observe({
     df <- eng_data()
     num_cols <- names(df)[sapply(df, is.numeric)]
@@ -315,7 +280,6 @@ server <- function(input, output, session) {
                                  else num_cols[min(2, length(num_cols))])
   })
 
-  # ---- Tab 1: Feature Guide ------------------------------------------------
   output$feature_guide_ui <- renderUI({
     sel <- input$selected_feats
     if (length(sel) == 0) return(tags$p("No features selected yet.", class = "text-muted"))
@@ -346,7 +310,6 @@ server <- function(input, output, session) {
     )
   })
 
-  # ---- Tab 2: Data Preview -------------------------------------------------
   output$preview_table <- renderDT({
     req(eng_data())
     datatable(
@@ -358,7 +321,6 @@ server <- function(input, output, session) {
     )
   })
 
-  # ---- Tab 3: Distribution -------------------------------------------------
   output$dist_plot <- renderPlot({
     df   <- eng_data()
     feat <- input$plot_feature
@@ -407,7 +369,6 @@ server <- function(input, output, session) {
     print(summary(df[[feat]]))
   })
 
-  # ---- Tab 4: Scatter ------------------------------------------------------
   output$scatter_plot <- renderPlot({
     df  <- eng_data()
     x   <- input$scatter_x
@@ -437,7 +398,6 @@ server <- function(input, output, session) {
               legend.position = "bottom")
   })
 
-  # ---- Tab 5: Summary Stats ------------------------------------------------
   output$summary_stats <- renderPrint({
     df       <- eng_data()
     num_cols <- names(df)[sapply(df, is.numeric)]
@@ -448,14 +408,9 @@ server <- function(input, output, session) {
     }
   })
 
-  # ---- Download ------------------------------------------------------------
   output$download_btn <- downloadHandler(
     filename = function() paste0("citibike_engineered_", Sys.Date(), ".csv"),
     content  = function(file) write.csv(eng_data(), file, row.names = FALSE)
   )
 }
-
-# =============================================================================
-# 5. Launch
-# =============================================================================
 shinyApp(ui = ui, server = server)
