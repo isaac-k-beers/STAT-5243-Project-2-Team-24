@@ -1,0 +1,8 @@
+id,name,age,score,passed
+1,Alice,21,88,TRUE
+2,Bob,,91,TRUE
+2,Bob,,91,TRUE
+3,carla,20,,TRUE
+4,David,23,64,FALSE
+5,,21,95,TRUE
+6,Emma,twenty,89,yes
