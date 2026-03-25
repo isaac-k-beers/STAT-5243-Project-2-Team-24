@@ -1,5 +1,3 @@
-# STAT-5243-Project-2-Team-24
-
 # STAT 5243 Project 2 — Team 24  
 ## Data Cleaning and Preprocessing Module
 
