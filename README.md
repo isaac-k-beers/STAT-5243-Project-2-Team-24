@@ -3,7 +3,6 @@
 **Universal Data Preprocessing & EDA App**
 
 Deployed Application: https://jiqiucu.shinyapps.io/STAT5243_Team24_Final_App/
-
 ## Overview
 
 An interactive R Shiny web application for data uploading, cleaning, feature engineering, and exploratory data analysis. Users can upload datasets in multiple formats, apply preprocessing steps, engineer new features, and explore the data through interactive visualizations — all without writing code.
